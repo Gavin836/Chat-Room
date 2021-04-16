@@ -9,6 +9,7 @@
 #include <string.h>
 #include <threads.h>
 #include <unistd.h>
+#include <assert.h>
 
 /*
 
@@ -31,10 +32,12 @@ struct sockaddr_in {
 */
 
 #define SERVER_IP "127.0.0.1"
-#define SERVER_PORT 12000
 #define UPDATE_INTERVAL 1
 
 #define BUF_LEN 2048
+
+#define TRUE 0
+#define FALSE 1
 
 typedef struct client_list *List;
 typedef struct args *Args;
@@ -121,22 +124,21 @@ void print_list(List list);
 Node node_new(struct client_info client);
 void node_destroy(Node node);
 ////////////////////////////////////////////////////////////////////////
-
-
+// Connection handlers
+int connect_handler(void *sockfd);
+int authenticate (int sockfd);
+int recvtcp_wrapper (int sockfd, char *buf);
 
 int main(int argc, char *argv[]) {
-    /*
-    // Setup server port and failed attempts from arguments
+    // Set port number and failed attempt number from arguments
     if (argc != 3) {
-        printf("Invalid Arguments: \"./server port_no failed_attempts_no\"\n");
-        
+        printf("Invalid number of arguments");
         return 1;
     }
-    
     int SERVER_PORT = atoi(argv[1]);
-    int FAILED_ATTEMPS = atoi(argv[2]);
-    (void) FAILED_ATTEMPS;
-    */
+    int NUM_FAILED_ATTEMPTS = atoi(argv[2]);
+    
+    (void) NUM_FAILED_ATTEMPTS;
     
     // Create the server's socket.
     //
@@ -149,8 +151,8 @@ int main(int argc, char *argv[]) {
     //
     // This returns a file descriptor, which we'll use with our sendto /
     // recvfrom functions later.
-    int server_fd = socket(AF_INET, SOCK_DGRAM, 0);
-    int client_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    // int client_fd = socket(AF_INET, SOCK_STREAM, 0);
 
     // Create the sockaddr that the server will use to send data to the
     // client.
@@ -163,50 +165,130 @@ int main(int argc, char *argv[]) {
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &so_reuseaddr, sizeof(int));
 
     printf("Binding...\n");
-    bind(server_fd, (struct sockaddr *) &sockaddr_to, sizeof(sockaddr_to));
-
-    // Create a new list, to keep track of the clients.
-    // The list struct also contains a mutex and a condition variable
-    // (equivalent to Python's threading.Condition()).
-    List list = list_new();
-
-    // Create an args struct for each thread. Both structs have a
-    // pointer to the same list, but different sockets (different file
-    // descriptors).
-    Args server_info = new_args(list, server_fd);
-    Args client_info = new_args(list, client_fd);
-
-    // Create the threads.
-    thrd_t recv_thread;
-    thrd_t send_thread;
-
-    thrd_create(&recv_thread, recv_handler, (void *) server_info);
-    thrd_create(&send_thread, send_handler, (void *) client_info);
-
-    while (1) {
-        // Equivalent to `sleep(0.1)`
-        usleep(100000);
+    if (bind(server_fd, (struct sockaddr *) &sockaddr_to, 
+             sizeof(sockaddr_to)) < 0){
+        printf("Failed to bind");
+        return 1;
     }
+    
+    printf("Listening...\n");
+    int wait_size = 5;  // maximum number of waiting clients
+    if (listen(server_fd, wait_size) < 0) {
+        printf("Could not open socket for listening\n");
+        return 1;
+    }
+    
+    // Dispatch the sockfd to a handler thread
+    int newfd;
+    struct sockaddr_storage their_addr;
+    socklen_t their_size = sizeof(their_addr);
+    thrd_t request_handler;
+    while(1) {
+        newfd = accept(server_fd, (struct sockaddr *)&their_addr, &their_size);
+        
+        if (newfd < 0) {
+            printf("Failed to open socket on accept");
+            break;
+        }
+        
+        thrd_create(&request_handler, connect_handler, (void *) &newfd);
+    }
+    
+    // // Create a new list, to keep track of the clients.
+    // // The list struct also contains a mutex and a condition variable
+    // // (equivalent to Python's threading.Condition()).
+    // List list = list_new();
+
+    // // Create an args struct for each thread. Both structs have a
+    // // pointer to the same list, but different sockets (different file
+    // // descriptors).
+    // Args server_info = new_args(list, server_fd);
+    // Args client_info = new_args(list, client_fd);
+
+    // // Create the threads.
+    // thrd_t recv_thread;
+    // thrd_t send_thread;
+
+    // thrd_create(&recv_thread, recv_handler, (void *) server_info);
+    // thrd_create(&send_thread, send_handler, (void *) client_info);
+
+    // while (1) {
+    //     // Equivalent to `sleep(0.1)`
+    //     usleep(100000);
+    // }
 
 
-    // This code will never be reached, but assuming there was some way
-    // to tell the server to shutdown, this code should happen at that
-    // point.
+    // // This code will never be reached, but assuming there was some way
+    // // to tell the server to shutdown, this code should happen at that
+    // // point.
 
-    // Close the sockets
-    close(server_fd);
-    close(client_fd);
+    // // Close the sockets
+    // close(server_fd);
+    // close(client_fd);arg
+    // int retval;
+    // thrd_join(recv_thread, &retval);
+    // thrd_join(send_thread, &retval);
 
-    // Clean up the threads.
-    int retval;
-    thrd_join(recv_thread, &retval);
-    thrd_join(send_thread, &retval);
-
-    // Free the memory for the linked list of clients.
-    // This also frees the mutex and condition.
-    list_destroy(list);
+    // // Free the memory for the linked list of clients.
+    // // This also frees the mutex and condition.
+    // list_destroy(list);
 
     return 0;
+}
+
+int connect_handler(void *sockfd_) {
+    int sockfd = *((int *) sockfd_);
+    int res;
+    
+    res = authenticate(sockfd);
+    
+    if (res != 0) {
+        printf("failed authen");
+    }
+
+    return 0;
+}
+
+int authenticate (int sockfd) {
+    int user_passed;
+    char *send_buf;
+    char username[BUF_LEN];
+    char password[BUF_LEN];
+    
+    user_passed = FALSE;
+    while (user_passed != TRUE) {
+        send_buf = "Username: ";
+        send(sockfd, send_buf, strlen(send_buf), 0);
+        while (recvtcp_wrapper(sockfd, username) == 0);
+        assert(strlen(username) > 0);
+        printf("got: %s", username);
+        
+        send_buf = "Password: ";
+        send(sockfd, send_buf, strlen(send_buf), 0);
+        while (recvtcp_wrapper(sockfd, password) == 0);
+        assert(strlen(password) > 0);
+        printf("got: %s", password);
+        
+        if (strlen(username) > 0 && strlen(password)) user_passed = TRUE;
+    }
+    
+    return 0;
+}
+
+int recvtcp_wrapper (int sockfd, char *buf) {
+    int bytes_recv, bytes_total;
+    char recv_buf[BUF_LEN];
+    char *pbuf;
+
+    while ((bytes_recv = recv(sockfd, pbuf, BUF_LEN, 0)) > 0) {
+        pbuf += bytes_recv;
+        bytes_total += bytes_recv;
+    }
+    printf("TOTAL: %d", bytes_total);
+
+    strcpy(buf, recv_buf);
+    
+    return strlen(buf);
 }
 
 int recv_handler(void *args_) {
@@ -438,6 +520,7 @@ void fill_sockaddr(struct sockaddr_in *sa, char *ip, int port) {
     // number from the "host" endianness (most likely little endian) to
     // big endian, also known as "network byte order".
     sa->sin_port = htons(port);
+    sa->sin_addr.s_addr = htonl(INADDR_ANY);
     inet_pton(AF_INET, ip, &(sa->sin_addr));
 }
 
@@ -603,4 +686,3 @@ void node_destroy(Node node) {
 }
 
 ////////////////////////////////////////////////////////////////////////
-
