@@ -3,9 +3,14 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sys/socket.h>
+#include <threads.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 #define BUF_LEN 2048
+
+int sock_recv (void *sockfd_);
+int sock_send (void *sockfd_);
 
 int main(int argc, char *argv[]) {
     // From argument get server ip and port, and udp port
@@ -45,38 +50,78 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    // prepare to receive
-    int len = 0, maxlen = 100;
-    char buffer[maxlen];
-    char* pbuffer = buffer;
-    
-    char data_to_send[BUF_LEN];
-    
+    thrd_t recv_thread;
+    thrd_t send_thread;
+
+    thrd_create(&send_thread, sock_send, (void *) &sock);
+    thrd_create(&recv_thread, sock_recv, (void *) &sock);
+
     while (1) {
-        // Server reply block until received
-        while ((len = recv(sock, pbuffer, maxlen, 0)) < 1);
-        buffer[len] = '\0';
-        printf("%s", buffer);
-        
-        // Close client reply
-        if(strcmp(buffer, "Close") == 0) {
-            break;
-        }
-        
-        // Client response
-        fgets(data_to_send, BUF_LEN, stdin);
-        //fgets reads in the newline character in buffer, get rid of it
-        strtok(data_to_send,"\n");
-        printf("read : %s\n",data_to_send);
-        //actual send call for TCP socket
-        send(sock, data_to_send, strlen(data_to_send)+1, 0);
-        
-        // Reset buffers
-        memset(buffer, 0, BUF_LEN);
-        memset(data_to_send, 0, BUF_LEN);
+        usleep(100000);
     }
+    // prepare to receive
+    // int len = 0;
+    // char buffer[BUF_LEN];
+    
+    // char data_to_send[BUF_LEN];
+    
+    // while (1) {
+    //     // Server reply block until received
+    //     printf("waiting on recv...\n");
+    //     len = recv(sock, buffer, BUF_LEN, 0);
+    //     buffer[len] = '\0';
+    //     printf("%s", buffer);
+        
+    //     // Client response
+    //     fgets(data_to_send, BUF_LEN, stdin);
+    //     //fgets reads in the newline character in buffer, get rid of it
+    //     strtok(data_to_send,"\n");
+    //     // printf("read : %s\n",data_to_send);
+    //     //actual send call for TCP socket
+    //     int bytes_sent = send(sock, data_to_send, strlen(data_to_send)+1, 0);
+    //     printf("sent %d\n", bytes_sent);
+        
+    //     // Reset buffers
+    //     memset(buffer, 0, BUF_LEN);
+    //     memset(data_to_send, 0, BUF_LEN);
+    // }
 
     // close the socket
     close(sock);
+    return 0;
+}
+
+int sock_send (void *sockfd_) {
+    int sockfd = *((int *)sockfd_);
+    char data_to_send[BUF_LEN];
+    
+    while (1) {
+        // Delay to prevent fgets from blocking sock_recv
+        usleep(100000);
+        fgets(data_to_send, BUF_LEN, stdin);
+        //fgets reads in the newline character in buffer, get rid of it
+        strtok(data_to_send,"\n");
+        // printf("read : %s\n",data_to_send);
+        //actual send call for TCP socket
+        send(sockfd, data_to_send, strlen(data_to_send) + 1, 0);
+        
+        // Reset buffers
+        memset(data_to_send, 0, BUF_LEN);
+    }
+    return 0;
+}
+
+int sock_recv (void *sockfd_) {
+    int sockfd = *((int *)sockfd_);
+    int len = 0;
+    char buffer[BUF_LEN];
+    
+    while((len = recv(sockfd, buffer, BUF_LEN, 0)) != 0) {
+        buffer[len] = '\0';
+        fputs(buffer, stdout);
+        
+        memset(buffer, 0, BUF_LEN);
+    }
+    
     return 0;
 }

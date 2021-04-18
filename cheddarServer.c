@@ -9,7 +9,6 @@
 #include <string.h>
 #include <threads.h>
 #include <unistd.h>
-#include <assert.h>
 
 /*
 
@@ -38,6 +37,8 @@ struct sockaddr_in {
 
 #define TRUE 0
 #define FALSE 1
+
+#define CRED_PATH credentials.txt
 
 typedef struct client_list *List;
 typedef struct args *Args;
@@ -126,8 +127,9 @@ void node_destroy(Node node);
 ////////////////////////////////////////////////////////////////////////
 // Connection handlers
 int connect_handler(void *sockfd);
-int authenticate (int sockfd);
-int recvtcp_wrapper (int sockfd, char *buf);
+int authenticate (int sockfd, int no_attempts);
+int recvtcp_to (int sockfd, char *buf);
+int sendtcp_to (int sockfd, char *buf);
 
 int main(int argc, char *argv[]) {
     // Set port number and failed attempt number from arguments
@@ -146,9 +148,8 @@ int main(int argc, char *argv[]) {
     // `AF_INET` indicates that the underlying network is using IPv4.
     //
     // The second parameter indicates that the socket is of type
-    // SOCK_DGRAM, which means it is a UDP socket (rather than a TCP
-    // socket, where we use SOCK_STREAM).
-    //
+    // SOCK_STREAM, which means it is a TCP socket 
+    
     // This returns a file descriptor, which we'll use with our sendto /
     // recvfrom functions later.
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -183,14 +184,15 @@ int main(int argc, char *argv[]) {
     struct sockaddr_storage their_addr;
     socklen_t their_size = sizeof(their_addr);
     thrd_t request_handler;
-    while(1) {
-        newfd = accept(server_fd, (struct sockaddr *)&their_addr, &their_size);
-        
+    while((newfd = accept(server_fd, (struct sockaddr *)&their_addr, 
+                          &their_size)) != -1) {
+        printf("accepting ...\n");
         if (newfd < 0) {
             printf("Failed to open socket on accept");
             break;
         }
         
+        fputs("creating thread\n", stdout);
         thrd_create(&request_handler, connect_handler, (void *) &newfd);
     }
     
@@ -237,58 +239,91 @@ int main(int argc, char *argv[]) {
 }
 
 int connect_handler(void *sockfd_) {
-    int sockfd = *((int *) sockfd_);
-    int res;
+    int sockfd = *((int *) sockfd_);   
+    int auth_passed;
     
-    res = authenticate(sockfd);
-    
-    if (res != 0) {
-        printf("failed authen");
+    // Authenticate user with n attempts
+    auth_passed = authenticate(sockfd, 3); 
+    while (auth_passed == FALSE) {        
+        // Wait 10 seconds
+        usleep(10000000);
+        auth_passed = authenticate(sockfd, 3);
     }
-
+    
+    sendtcp_to(sockfd, "Sucess!\nPlease enter a command: ");
     return 0;
 }
 
-int authenticate (int sockfd) {
-    int user_passed;
-    char *send_buf;
+int authenticate (int sockfd, int no_attempts) {
+    char send_buf[BUF_LEN];
     char username[BUF_LEN];
     char password[BUF_LEN];
+        
+    for (int i = 0; i < no_attempts; i++) {
+        sendtcp_to(sockfd, "Username: ");
+        recvtcp_to(sockfd, username);
     
-    user_passed = FALSE;
-    while (user_passed != TRUE) {
-        send_buf = "Username: ";
-        send(sockfd, send_buf, strlen(send_buf), 0);
-        while (recvtcp_wrapper(sockfd, username) == 0);
-        assert(strlen(username) > 0);
-        printf("got: %s", username);
+        sendtcp_to(sockfd, "Password: ");
+        recvtcp_to(sockfd, password);
         
-        send_buf = "Password: ";
-        send(sockfd, send_buf, strlen(send_buf), 0);
-        while (recvtcp_wrapper(sockfd, password) == 0);
-        assert(strlen(password) > 0);
-        printf("got: %s", password);
+        printf("got User: %s, Pass: %s", username, password);
+
+        // Check credentials
+        if (strlen(username) > 3 && strlen(password) > 3) {
+            puts("\n");
+
+            return TRUE;
+        }
         
-        if (strlen(username) > 0 && strlen(password)) user_passed = TRUE;
+        if (i != no_attempts) {
+            snprintf(send_buf, BUF_LEN, "Failed login %d of %d \n",
+                     i + 1, no_attempts);
+            sendtcp_to(sockfd, send_buf);
+        } else {
+            sendtcp_to(sockfd, "Authentication failed. Waiting 10 secs before input \
+                                accepted\n");
+        }
+
+        
+        // Reset buffers
+        memset(send_buf, 0, BUF_LEN);
+        memset(username, 0, BUF_LEN);
+        memset(password, 0, BUF_LEN);
     }
     
-    return 0;
+    return FALSE;
 }
 
-int recvtcp_wrapper (int sockfd, char *buf) {
-    int bytes_recv, bytes_total;
+int recvtcp_to (int sockfd, char *buf) {
+    int bytes_recv;
     char recv_buf[BUF_LEN];
-    char *pbuf;
-
-    while ((bytes_recv = recv(sockfd, pbuf, BUF_LEN, 0)) > 0) {
-        pbuf += bytes_recv;
-        bytes_total += bytes_recv;
-    }
-    printf("TOTAL: %d", bytes_total);
+    
+    bytes_recv = recv(sockfd, recv_buf, BUF_LEN, 0);
+    
+    if (bytes_recv < 1) return 0;
 
     strcpy(buf, recv_buf);
     
     return strlen(buf);
+}
+
+int sendtcp_to (int sockfd, char *buf) {
+    char send_buf[BUF_LEN];
+    char *psend_buf;
+    int bytes_sent, bytes_remaining;
+    
+    strcpy(send_buf, buf);
+    psend_buf = send_buf;
+    bytes_sent = 0;    
+    bytes_remaining = strlen(buf);
+    
+    while(bytes_remaining > 0) {
+        bytes_sent = send(sockfd, psend_buf, strlen(psend_buf) + 1, 0);
+        bytes_remaining -= bytes_sent;
+        psend_buf += bytes_sent;
+    }
+    
+    return 0;
 }
 
 int recv_handler(void *args_) {
