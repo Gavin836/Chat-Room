@@ -38,8 +38,7 @@ struct sockaddr_in {
 #define TRUE 0
 #define FALSE 1
 
-#define CRED_PATH "credentials.txt"
-#define MSG_PATH "messagelog.txt"
+#define CRED_PATH credentials.txt
 
 typedef struct client_list *List;
 typedef struct args *Args;
@@ -126,69 +125,11 @@ void print_list(List list);
 Node node_new(struct client_info client);
 void node_destroy(Node node);
 ////////////////////////////////////////////////////////////////////////
-// Data structures
- struct auth_ent {
-    char *username;
-    char *password;
-    int failed_login;
-    struct auth_ent *next_ent;
-};
-
-struct active_user {
-    char *username;
-    int time;
-    char *ip;
-    char *udp;  
-    struct active_user *next_user;
-};
-
-struct chat_msg {
-    int message_no;
-    int time;
-    char *from;
-    char *to;
-    char *contents;
-    int modified;
-    struct chat_msg *next_msg;
-};
-
-// Globals
-struct auth_ent *auth_head;
-struct active_user *user_head;
-struct chat_msg *msg_head;
-
 // Connection handlers
 int connect_handler(void *sockfd);
-int authenticate (int sockfd, int no_attempts, char** ret);
-int command_handler(int sockfd);
-
+int authenticate (int sockfd, int no_attempts);
 int recvtcp_to (int sockfd, char *buf);
 int sendtcp_to (int sockfd, char *buf);
-
-// Authentication list helpers
-int insert_auth_list(char *username, char *password);
-
-int bootstrap (void){
-    FILE *fd_cred;
-    char read_buffer[BUF_LEN];
-    char *username;
-    char *password;
-    
-    // Extract credentials from file
-    fd_cred = fopen(CRED_PATH, "r");
-    
-    if (fd_cred != NULL) {
-        while(fgets(read_buffer, BUF_LEN, fd_cred) != NULL) {
-            // Username and passwords are delimited by a " " character
-            username = strtok(read_buffer, " ");
-            password = strtok(NULL, " ");
-            insert_auth_list(username, password);
-        }
-    }
-    
-    // fclose(fd_cred);
-    return 0;
-}
 
 int main(int argc, char *argv[]) {
     // Set port number and failed attempt number from arguments
@@ -196,7 +137,6 @@ int main(int argc, char *argv[]) {
         printf("Invalid number of arguments");
         return 1;
     }
-    
     int SERVER_PORT = atoi(argv[1]);
     int NUM_FAILED_ATTEMPTS = atoi(argv[2]);
     
@@ -239,9 +179,6 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    // Initialise credentials
-    bootstrap();
-    
     // Dispatch the sockfd to a handler thread
     int newfd;
     struct sockaddr_storage their_addr;
@@ -258,138 +195,71 @@ int main(int argc, char *argv[]) {
         fputs("creating thread\n", stdout);
         thrd_create(&request_handler, connect_handler, (void *) &newfd);
     }
+    
+    // // Create a new list, to keep track of the clients.
+    // // The list struct also contains a mutex and a condition variable
+    // // (equivalent to Python's threading.Condition()).
+    // List list = list_new();
+
+    // // Create an args struct for each thread. Both structs have a
+    // // pointer to the same list, but different sockets (different file
+    // // descriptors).
+    // Args server_info = new_args(list, server_fd);
+    // Args client_info = new_args(list, client_fd);
+
+    // // Create the threads.
+    // thrd_t recv_thread;
+    // thrd_t send_thread;
+
+    // thrd_create(&recv_thread, recv_handler, (void *) server_info);
+    // thrd_create(&send_thread, send_handler, (void *) client_info);
+
+    // while (1) {
+    //     // Equivalent to `sleep(0.1)`
+    //     usleep(100000);
+    // }
+
+
+    // // This code will never be reached, but assuming there was some way
+    // // to tell the server to shutdown, this code should happen at that
+    // // point.
+
+    // // Close the sockets
+    // close(server_fd);
+    // close(client_fd);arg
+    // int retval;
+    // thrd_join(recv_thread, &retval);
+    // thrd_join(send_thread, &retval);
+
+    // // Free the memory for the linked list of clients.
+    // // This also frees the mutex and condition.
+    // list_destroy(list);
 
     return 0;
 }
 
 int connect_handler(void *sockfd_) {
     int sockfd = *((int *) sockfd_);   
-    int auth_passed;
-    char *username;
-    // Authenticate user with n attempts
-    username = calloc(BUF_LEN, sizeof(char));
-    if (username == NULL) {
-        return 1;
-    }
+    char buf[BUF_LEN];
+    char final[BUF_LEN];
     
-    auth_passed = authenticate(sockfd, 3, &username); 
-    if (auth_passed != 0) {
-        sendtcp_to(sockfd, "Failed to create user");
-    }
-    
-    // create_active_user(username, ip, port);
-    
-    sendtcp_to(sockfd, "Sucess!\nPlease enter a command: ");
-    command_handler(sockfd);
-    
-    close(sockfd);
-    return 0;
-}
+    strcpy(final, "Recv: ");
+    sendtcp_to(sockfd, "1");
+    sendtcp_to(sockfd, "Sucess! Please enter a command: ");
 
-int command_handler(int sockfd) {
-    char recv_buf[BUF_LEN];
-    char cmd[4];
-    
     while (1) {
-        recvtcp_to(sockfd, recv_buf);
+        recvtcp_to(sockfd, buf);
         
-        strncpy(cmd, recv_buf, 3);
-                
-        if (strcmp("MSG", cmd)) {
-        
-        } else if (strcmp("DLT", cmd)) {
-        
-        } else if (strcmp("EDT", cmd)) {
-        
-        } else if (strcmp("RDM", cmd)) {
-        
-        } else if (strcmp("ATU", cmd)) {
-        
-        } else if (strcmp("OUT", cmd)) {
-            sendtcp_to(sockfd, "Goodbye!");
-            break;
-        
-        } else {
-            return 1;
-        }
-    }
-    
-    return 0;
-}
-
-int authenticate (int sockfd, int no_attempts, char** ret) {
-    char *buf;
-    char send_buf[BUF_LEN];
-    char username[BUF_LEN];
-    char password[BUF_LEN];
-    FILE *fd;
-    struct auth_ent *curr_ent;
-        
-    sendtcp_to(sockfd, "Username: ");
-    recvtcp_to(sockfd, username);
-    
-    while (1) {
-        sendtcp_to(sockfd, "Password: ");
-        recvtcp_to(sockfd, password);
-        
-        printf("Server: From client User: %s, Pass: %s", username, password);
-
-        // Check credentials
-        if (auth_head != NULL) {
-            curr_ent = auth_head;
-            while (curr_ent != NULL ) {
-                if (strcmp(username, curr_ent->username) == 0) {
-                    if (strcpy(password, curr_ent->password) == 0) {
-                        strcpy(*ret, username);
-                        return true;
-                    }
-                    
-                    curr_ent->failed_login++;
-                    break;
-                }
-            }
-        }
-        
-        // New Login created when auth list is empty/ no entry found.
-        // Return true if entry added.
-        if (auth_head == NULL || curr_ent == NULL) {
-            if (insert_auth_list(username, password) == 0) {
-                    // Write into credentials
-                fd = fopen(CRED_PATH, "a");
-                buf = calloc(BUF_LEN, sizeof(char));
-                strcpy(buf, username);
-                strcat(buf, " ");
-                strcat(buf, password);
-                
-                fputs(buf, fd);
-                free(buf);
-                strcpy(*ret, username);
-                return 0;
-            }
+        if(strlen(buf) > 1) {
+            sendtcp_to(sockfd, "1");
+            sendtcp_to(sockfd, strcat(final, buf));
             
-            return 1;
+            memset(final, 0, BUF_LEN * sizeof(char));
+            strcpy(final, "Recv: ");
         }
-        
-        // Failed login logic
-        if (curr_ent->failed_login != no_attempts) {
-            snprintf(send_buf, BUF_LEN, "Failed login %d of %d \nUsername: ",
-                     curr_ent->failed_login , no_attempts);
-            sendtcp_to(sockfd, send_buf);
-        
-        } else {
-            sendtcp_to(sockfd, "Authentication failed. Waiting 10 secs before \
-                                input is accepted\nUsername: ");
-            curr_ent->failed_login = 0;
-            usleep(10000000);
-        }
-
-        // Reset buffers
-        memset(send_buf, 0, BUF_LEN);
-        memset(username, 0, BUF_LEN);
-        memset(password, 0, BUF_LEN);
     }
     
-    return FALSE;
+    return 0;
 }
 
 int recvtcp_to (int sockfd, char *buf) {
@@ -423,53 +293,6 @@ int sendtcp_to (int sockfd, char *buf) {
     
     return 0;
 }
-
-
-int insert_auth_list(char *username, char *password) {
-    struct auth_ent *new_auth; 
-
-    new_auth = calloc(1, sizeof(struct auth_ent *));
-    new_auth->username = calloc(BUF_LEN, sizeof(char));
-    if(new_auth->username == NULL) return 1;
-    
-    new_auth->password = calloc(BUF_LEN, sizeof(char));
-    if(new_auth->password == NULL) {
-        free(new_auth->username);
-        return 1;
-    }
-    
-    new_auth->failed_login = 0;
-    new_auth->next_ent = NULL;
-       
-    strcpy(new_auth->username, username);
-    strcpy(new_auth->password, password);
-    
-    // Insert node linked list
-    if (auth_head == NULL) {
-        auth_head = new_auth;
-    } else {
-        new_auth->next_ent = auth_head;
-        auth_head = new_auth;
-    }
-    
-    return 0;
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 int recv_handler(void *args_) {
     Args args = (Args) args_;

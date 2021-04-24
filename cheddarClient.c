@@ -8,9 +8,12 @@
 #include <fcntl.h>
 
 #define BUF_LEN 2048
+#define TRUE 0
+#define FALSE 1
 
 int sock_recv (void *sockfd_);
 int sock_send (void *sockfd_);
+// void auth_str (char *auth_str);
 
 int main(int argc, char *argv[]) {
     // From argument get server ip and port, and udp port
@@ -50,6 +53,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
+    // Using threads blocking issue
     thrd_t recv_thread;
     thrd_t send_thread;
 
@@ -59,15 +63,28 @@ int main(int argc, char *argv[]) {
     while (1) {
         usleep(100000);
     }
-    // prepare to receive
+
     // int len = 0;
     // char buffer[BUF_LEN];
     
     // char data_to_send[BUF_LEN];
+    // auth_str(data_to_send);
+    // int auth = FALSE;
+    // while (auth == FALSE) {
+    //     // Server reply block until received
+    //     len = recv(sock, buffer, BUF_LEN, 0);
+    //     buffer[len] = '\0';
+                
+    //     if(strcmp(buffer, "Authorised") == 0) {
+    //         auth = TRUE;
+    //     } else {
+    //         puts(buffer);
+    //         auth_str(data_to_send);
+    //     }
+    // }
     
     // while (1) {
     //     // Server reply block until received
-    //     printf("waiting on recv...\n");
     //     len = recv(sock, buffer, BUF_LEN, 0);
     //     buffer[len] = '\0';
     //     printf("%s", buffer);
