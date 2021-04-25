@@ -54,6 +54,7 @@ int main(int argc, char *argv[]) {
         printf("could not connect to server\n");
         return 1;
     }
+    
     // Set global program status
     end_client = false;
     // Using threads blocking issue
@@ -88,12 +89,15 @@ int sock_send (void *sockfd_) {
         // Delay to prevent fgets from blocking sock_recv
         usleep(100000);
         fgets(data_to_send, BUF_LEN, stdin);
+            
         //fgets reads in the newline character in buffer, get rid of it
         strtok(data_to_send,"\n");
-        // printf("read : %s\n",data_to_send);
+        
         //actual send call for TCP socket
         send(sockfd, data_to_send, strlen(data_to_send) + 1, 0);
         
+        if(strcmp(data_to_send, "OUT") == 0) break;
+
         // Reset buffers
         memset(data_to_send, 0, BUF_LEN);
     }
@@ -122,8 +126,6 @@ int sock_recv (void *sockfd_) {
         }
         
         memset(buffer, 0, BUF_LEN);
-        
-
     }
     
     return 0;
