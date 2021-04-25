@@ -8,12 +8,14 @@
 #include <fcntl.h>
 
 #define BUF_LEN 2048
-#define TRUE 0
-#define FALSE 1
+#define true 0
+#define false 1
 
 int sock_recv (void *sockfd_);
 int sock_send (void *sockfd_);
-// void auth_str (char *auth_str);
+
+// Globals
+int end_client;
 
 int main(int argc, char *argv[]) {
     // From argument get server ip and port, and udp port
@@ -52,7 +54,8 @@ int main(int argc, char *argv[]) {
         printf("could not connect to server\n");
         return 1;
     }
-    
+    // Set global program status
+    end_client = false;
     // Using threads blocking issue
     thrd_t recv_thread;
     thrd_t send_thread;
@@ -60,48 +63,17 @@ int main(int argc, char *argv[]) {
     thrd_create(&send_thread, sock_send, (void *) &sock);
     thrd_create(&recv_thread, sock_recv, (void *) &sock);
 
-    while (1) {
+    while (end_client == false) {
         usleep(100000);
     }
+    
+    // Close the sockets
+    close(sock);
 
-    // int len = 0;
-    // char buffer[BUF_LEN];
-    
-    // char data_to_send[BUF_LEN];
-    // auth_str(data_to_send);
-    // int auth = FALSE;
-    // while (auth == FALSE) {
-    //     // Server reply block until received
-    //     len = recv(sock, buffer, BUF_LEN, 0);
-    //     buffer[len] = '\0';
-                
-    //     if(strcmp(buffer, "Authorised") == 0) {
-    //         auth = TRUE;
-    //     } else {
-    //         puts(buffer);
-    //         auth_str(data_to_send);
-    //     }
-    // }
-    
-    // while (1) {
-    //     // Server reply block until received
-    //     len = recv(sock, buffer, BUF_LEN, 0);
-    //     buffer[len] = '\0';
-    //     printf("%s", buffer);
-        
-    //     // Client response
-    //     fgets(data_to_send, BUF_LEN, stdin);
-    //     //fgets reads in the newline character in buffer, get rid of it
-    //     strtok(data_to_send,"\n");
-    //     // printf("read : %s\n",data_to_send);
-    //     //actual send call for TCP socket
-    //     int bytes_sent = send(sock, data_to_send, strlen(data_to_send)+1, 0);
-    //     printf("sent %d\n", bytes_sent);
-        
-    //     // Reset buffers
-    //     memset(buffer, 0, BUF_LEN);
-    //     memset(data_to_send, 0, BUF_LEN);
-    // }
+    // Clean up the threads.
+    int retval;
+    thrd_join(send_thread, &retval);
+    thrd_join(recv_thread, &retval);
 
     // close the socket
     close(sock);
@@ -125,19 +97,33 @@ int sock_send (void *sockfd_) {
         // Reset buffers
         memset(data_to_send, 0, BUF_LEN);
     }
+    
     return 0;
 }
 
 int sock_recv (void *sockfd_) {
     int sockfd = *((int *)sockfd_);
-    int len = 0;
     char buffer[BUF_LEN];
+    char *pbuf;
     
-    while((len = recv(sockfd, buffer, BUF_LEN, 0)) != 0) {
-        buffer[len] = '\0';
+    while(recv(sockfd, buffer, BUF_LEN, 0) != 0) {
         fputs(buffer, stdout);
         
+        if (strcmp("Goodbye!", buffer) == 0) {
+            end_client = true;
+        }
+        
+        // Print out rest of string, if buffer is delimited by '\0' 
+        pbuf = buffer;
+        pbuf += (strlen(buffer) + 1);
+        while ((strlen(pbuf)) != 0) {
+            fputs(pbuf, stdout);
+            pbuf += (strlen(pbuf) + 1);
+        }
+        
         memset(buffer, 0, BUF_LEN);
+        
+
     }
     
     return 0;

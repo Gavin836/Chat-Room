@@ -136,9 +136,9 @@ void node_destroy(Node node);
 
 struct active_user {
     char *username;
-    int time;
+    char *time;
     char *ip;
-    char *udp;  
+    int udp_port;
     struct active_user *next_user;
 };
 
@@ -160,7 +160,12 @@ struct chat_msg *msg_head;
 // Connection handlers
 int connect_handler(void *sockfd);
 int authenticate (int sockfd, int no_attempts, char** ret);
-int command_handler(int sockfd);
+int command_handler(int sockfd, struct active_user *curr_user);
+
+struct active_user *create_active_user(char *username, char* ip, int port);
+int user_list_insert(struct active_user *new_user);
+void user_list_delete(struct active_user *user);
+void active_user_destroy(struct active_user *user);
 
 int recvtcp_to (int sockfd, char *buf);
 int sendtcp_to (int sockfd, char *buf);
@@ -273,48 +278,114 @@ int connect_handler(void *sockfd_) {
     }
     
     auth_passed = authenticate(sockfd, 3, &username); 
-    if (auth_passed != 0) {
+    if (auth_passed != true) {
         sendtcp_to(sockfd, "Failed to create user");
     }
     
-    // create_active_user(username, ip, port);
+    struct active_user *curr_user =  create_active_user(username, "Ip", 1);
+    sendtcp_to(sockfd, "Log in sucess!\n");
+    command_handler(sockfd, curr_user);
     
-    sendtcp_to(sockfd, "Sucess!\nPlease enter a command: ");
-    command_handler(sockfd);
-    
+    user_list_delete(curr_user);
+    free(username);
     close(sockfd);
     return 0;
 }
 
-int command_handler(int sockfd) {
+int command_handler(int sockfd, struct active_user *curr_user) {
     char recv_buf[BUF_LEN];
     char cmd[4];
     
+    (void) curr_user;
+    
     while (1) {
+        sendtcp_to(sockfd, "Please enter a command: ");
         recvtcp_to(sockfd, recv_buf);
         
         strncpy(cmd, recv_buf, 3);
                 
-        if (strcmp("MSG", cmd)) {
+        if (strcmp("MSG", cmd) == 0) {
         
-        } else if (strcmp("DLT", cmd)) {
+        } else if (strcmp("DLT", cmd) == 0) {
         
-        } else if (strcmp("EDT", cmd)) {
+        } else if (strcmp("EDT", cmd)  == 0) {
         
-        } else if (strcmp("RDM", cmd)) {
+        } else if (strcmp("RDM", cmd) == 0) {
         
-        } else if (strcmp("ATU", cmd)) {
+        } else if (strcmp("ATU", cmd) == 0) {
         
-        } else if (strcmp("OUT", cmd)) {
-            sendtcp_to(sockfd, "Goodbye!");
+        } else if (strcmp("OUT", cmd) == 0) {
+            sendtcp_to(sockfd, "Goodbye! Signed out\n");
             break;
         
         } else {
-            return 1;
+            sendtcp_to(sockfd, "Invalid Command.");
+            continue;
         }
+        
+        sendtcp_to(sockfd, "Please enter a command: ");
     }
     
     return 0;
+}
+
+struct active_user *create_active_user(char *username, char* ip, int port) {
+    struct active_user *new_user;
+    int result;
+    
+    new_user = calloc(1, sizeof(struct active_user));
+    
+    if (new_user == NULL) {
+        return NULL;
+    }
+    
+    new_user->username = strdup(username);
+    new_user->time = get_time();
+    new_user->ip = strdup(ip);
+    new_user->udp_port = port;
+    new_user->next_user = NULL;
+    
+    result = user_list_insert(new_user);
+    
+    if (result != 0) {
+        free(new_user);
+        return NULL;
+    }    
+    
+    return new_user;
+}
+
+int user_list_insert(struct active_user *new_user) {
+    
+    if (user_head == NULL) user_head = new_user;
+    
+    new_user->next_user = user_head;
+    user_head = new_user;
+    
+    return 0;
+}
+
+void user_list_delete(struct active_user *user) {
+    struct active_user *prev;
+    struct active_user *curr_user;
+    
+    prev = NULL;
+    curr_user = user_head;
+    
+    if (curr_user == user) {
+        if (prev == NULL) {
+            user_head = user->next_user;
+        } else {
+            prev->next_user = user->next_user;
+        }
+    }
+    active_user_destroy(user);
+}
+
+void active_user_destroy(struct active_user *user) {
+    free(user->username);
+    free(user->ip);
+    free(user);
 }
 
 int authenticate (int sockfd, int no_attempts, char** ret) {
@@ -326,20 +397,20 @@ int authenticate (int sockfd, int no_attempts, char** ret) {
     struct auth_ent *curr_ent;
         
     sendtcp_to(sockfd, "Username: ");
-    recvtcp_to(sockfd, username);
-    
     while (1) {
+        // Recv for Username
+        recvtcp_to(sockfd, username);
+        
         sendtcp_to(sockfd, "Password: ");
         recvtcp_to(sockfd, password);
         
-        printf("Server: From client User: %s, Pass: %s", username, password);
-
         // Check credentials
         if (auth_head != NULL) {
             curr_ent = auth_head;
             while (curr_ent != NULL ) {
                 if (strcmp(username, curr_ent->username) == 0) {
-                    if (strcpy(password, curr_ent->password) == 0) {
+                    if (strcmp(password, curr_ent->password) == 0) {
+                        curr_ent->failed_login = 0;
                         strcpy(*ret, username);
                         return true;
                     }
@@ -347,6 +418,7 @@ int authenticate (int sockfd, int no_attempts, char** ret) {
                     curr_ent->failed_login++;
                     break;
                 }
+                curr_ent = curr_ent->next_ent;
             }
         }
         
@@ -354,7 +426,7 @@ int authenticate (int sockfd, int no_attempts, char** ret) {
         // Return true if entry added.
         if (auth_head == NULL || curr_ent == NULL) {
             if (insert_auth_list(username, password) == 0) {
-                    // Write into credentials
+                // Write into credentials file
                 fd = fopen(CRED_PATH, "a");
                 buf = calloc(BUF_LEN, sizeof(char));
                 strcpy(buf, username);
@@ -364,10 +436,10 @@ int authenticate (int sockfd, int no_attempts, char** ret) {
                 fputs(buf, fd);
                 free(buf);
                 strcpy(*ret, username);
-                return 0;
+                return true;
             }
             
-            return 1;
+            return false;
         }
         
         // Failed login logic
@@ -377,8 +449,7 @@ int authenticate (int sockfd, int no_attempts, char** ret) {
             sendtcp_to(sockfd, send_buf);
         
         } else {
-            sendtcp_to(sockfd, "Authentication failed. Waiting 10 secs before \
-                                input is accepted\nUsername: ");
+            sendtcp_to(sockfd, "Authentication failed. Waiting 10 secs before input is accepted\nUsername: ");
             curr_ent->failed_login = 0;
             usleep(10000000);
         }
@@ -389,7 +460,7 @@ int authenticate (int sockfd, int no_attempts, char** ret) {
         memset(password, 0, BUF_LEN);
     }
     
-    return FALSE;
+    return false;
 }
 
 int recvtcp_to (int sockfd, char *buf) {
