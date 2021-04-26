@@ -5,11 +5,11 @@ LDFLAGS	= -pthread
 .PHONY: all
 all: client server
 
-client: cheddarClient.o
+client: chatClient.o
 	${CC} ${CFLAGS} ${LDFLAGS} -o $@ $^
-server: cheddarServer.o
+server: chatServer.o
 	${CC} ${CFLAGS} ${LDFLAGS} -o $@ $^
 	
 .PHONY clean:
 clean: 
-	rm client server cheddarClient.o cheddarServer.o
+	rm client server chatClient.o chatServer.o

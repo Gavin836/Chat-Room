@@ -10,110 +10,12 @@
 #include <threads.h>
 #include <unistd.h>
 
-/*
-
-A good reference for C sockets programming (esp. structs and syscalls):
-https://beej.us/guide/bgnet/html/multi/index.html
-
-And for information on C Threads:
-https://www.gnu.org/software/libc/manual/html_node/ISO-C-Threads.html
-
-One of the main structs used in this program is the "sockaddr_in" struct.
-See: https://beej.us/guide/bgnet/html/multi/ipstructsdata.html#structs
-
-struct sockaddr_in {
-    short int          sin_family;  // Address family, AF_INET
-    unsigned short int sin_port;    // Port number
-    struct in_addr     sin_addr;    // Internet address
-    unsigned char      sin_zero[8]; // Same size as struct sockaddr
-};
-
-*/
-
-#define SERVER_IP "127.0.0.1"
-#define UPDATE_INTERVAL 1
-
-#define BUF_LEN 2048
-
-#define TRUE 0
-#define FALSE 1
-
-#define CRED_PATH "credentials.txt"
-#define MSG_PATH "messagelog.txt"
-
-typedef struct args *Args;
-
-// Handlers for the sending and receiving threads.
-int recv_handler(void *info);
-int send_handler(void *info);
-
-// Arguments struct (and creation function) to pass the required info
-// into the thread handlers.
-struct args {
-    int fd;
-};
-
-////////////////////////////////////////////////////////////////////////
-// Socket helper functions
-
-// Get the "name" (IP address) of who we're communicating with.
-char *get_name(struct sockaddr_in *sa, char *name);
-
-// Populate a sockaddr_in struct with the specified IP / port to connect to.
-void fill_sockaddr(struct sockaddr_in *sa, char *ip, int port);
-
-// Get a string containing the current date/time.
-char *get_time(void);
-
-////////////////////////////////////////////////////////////////////////
-// Data structures
- struct auth_ent {
-    char *username;
-    char *password;
-    int failed_login;
-    struct auth_ent *next_ent;
-};
-
-struct active_user {
-    char *username;
-    char *time;
-    char *ip;
-    int udp_port;
-    struct active_user *next_user;
-};
-
-struct chat_msg {
-    int message_no;
-    int time;
-    char *from;
-    char *to;
-    char *contents;
-    int modified;
-    struct chat_msg *next_msg;
-};
+#include "chatServer.h"
 
 // Globals
 struct auth_ent *auth_head;
 struct active_user *user_head;
 struct chat_msg *msg_head;
-
-// Connection handlers
-int connect_handler(void *sockfd);
-int authenticate (int sockfd, int no_attempts, char** ret);
-int command_handler(int sockfd, struct active_user *curr_user);
-
-// Send and recv wrappers
-int recvtcp_to (int sockfd, char *buf);
-int sendtcp_to (int sockfd, char *buf);
-
-// Authentication list helpers
-int insert_auth_list(char *username, char *password);
-
-// User list helpers
-struct active_user *create_active_user(char *username, char* ip, int port);
-int user_list_insert(struct active_user *new_user);
-void user_list_delete(struct active_user *user);
-void active_user_destroy(struct active_user *user);
 
 // Used to load data before server runs
 int bootstrap (void){
@@ -237,7 +139,9 @@ int connect_handler(void *sockfd_) {
 
 int command_handler(int sockfd, struct active_user *curr_user) {
     char recv_buf[BUF_LEN];
+    char **recv_args;
     char cmd[4];
+    char *args;
     
     (void) curr_user;
     
@@ -245,10 +149,11 @@ int command_handler(int sockfd, struct active_user *curr_user) {
         sendtcp_to(sockfd, "Please enter a command: ");
         recvtcp_to(sockfd, recv_buf);
         
-        strncpy(cmd, recv_buf, 3);
-                
-        if (strcmp("MSG", cmd) == 0) {
+        args = recv_buf + 3;
+        recv_args = tokenise_args(args);                
         
+        if (strcmp("MSG", cmd) == 0) {
+
         } else if (strcmp("DLT", cmd) == 0) {
         
         } else if (strcmp("EDT", cmd)  == 0) {
@@ -270,6 +175,51 @@ int command_handler(int sockfd, struct active_user *curr_user) {
     }
     
     return 0;
+}
+
+int cmd_msg (int sockfd, char** args, struct active_user *sender) {
+    char *msg;
+    struct chat_msg *new_msg;
+    
+    msg = args[0];
+    // Check arguments are valid
+    if (msg == NULL || (strlen(msg) < 1) ) {
+        sendtcp_to(sockfd, "No message argument for MSG\n");
+        return 0;
+    }
+    
+    new_msg = calloc(1, sizeof(struct chat_msg));
+    
+    if (msg == NULL) return 1;
+    
+    new_msg->contents = strdup(msg);
+    if (new_msg->contents == NULL) {
+        free(new_msg);
+        return 1;
+    }
+    
+    new_msg->from = sender->username;
+    new_msg->modified = false;
+    new_msg->time = get_time();
+
+}
+
+char **tokenise_args (char *input_string) {
+    char **args;
+    char *cur_string;
+    int i;
+    
+    args = calloc(MAX_ARGS, sizeof(char *));
+    cur_string = strtok(input_string, " ");
+    
+    for (i = 0; i < MAX_ARGS; i++) {
+        if(cur_string == NULL) break;
+        args[i] = strdup(cur_string);
+        
+        cur_string = strtok(NULL, " ");
+    }
+    
+    return args;
 }
 
 struct active_user *create_active_user(char *username, char* ip, int port) {
