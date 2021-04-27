@@ -11,16 +11,19 @@ import string
 BUFLEN = 2048
 
 # Global variables, TODO: add synchronisation
-connections = []
-clientSockets = []
-t_lock=threading.Condition()
+connections = []  # List of tuples of (socket, addr)
+clientSockets = [] # List of sockets to read from
+t_lock=threading.Condition() # Lock to ensure shared structures of thread are deadlock free
 
+# The objects responsible to authenticating users. 
+# All entries loaded at start time
 class authObj:
     def __init__(self, user, passwd):
         self.user = user
         self.passwd = passwd
         self.loginAttempts = 0
 
+# Provide methods to access and process authObjs
 class authList:
     def __init__(self, maxLoginAttempts):
         self.authList = []
@@ -31,6 +34,12 @@ class authList:
             res = line.split()
             self.insert(res[0], res[1])        
     
+    # Check if user/pass combination is in list
+    # ret 0 = login valid
+    # ret -1 = failed login (different ip). fail counter incremented
+    # ret -2 = failed login (different ip). fail counter incremented
+    # ret -3 = failed login and timing out. signal to reset counter
+
     def auth(self, user, passwd):
         
         for authObj in self.authList:
@@ -48,7 +57,7 @@ class authList:
                         return -2
     
         return -1;
-    
+    # Reset login attempt after 10 secs
     def resetAttempts(self, user):
         for authObj in self.authList:
             if (authObj.user == user):
@@ -60,7 +69,9 @@ class authList:
         
     def is_empty(self):
         return (len(self.authList) == 0)
-        
+
+# Data structure used to stored information on clients session.
+# Entries are populated when users are logged on (removed otherwise)
 class clientObj:
     def __init__(self, user, seq, connection, port):
         self.user = user
@@ -70,15 +81,19 @@ class clientObj:
         self.udpPort = port
         self.time = dt.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     
+    # String for printing within server
     def getStr(self):
         return "{}; {}; {}; {}; {}".format(self.seqNumber, self.time, self.user, self.ip, self.udpPort)
     
+    # String for printing at clients
     def clientPrint(self):
         return (self.user + "(IP: {}, PORT {})".format(self.ip, self.udpPort) 
                          + " online since " + self.time)
         
     def destroy(self):
         close(self.fd)
+
+# List of clientObj, and methods to process it.
 class clientList:
     def __init__ (self):
         self.clientList = []
@@ -102,15 +117,18 @@ class clientList:
     def clientRemove(self, name):
         self.clientList.remove(self.findObj(name))
     
+    # Return list of active users that are not "name"
     def getOthers(self, name):
         retList = []
-        for user in self.clientList:
-            if (not((len(name) != len(user.user)) and (name in user))):
-                retList.append(user)
+        for client in self.clientList:
+            # Strcmp != 0, remove the users with "name"
+            if (not(len(name) == len(client.user))):
+                if (not(name in client.user)):
+                    retList.append(client)
         
         return retList
             
-
+# Used for storing messages with associated metadata
 class msgObj:
     def __init__ (self, id, fromUser, content):
         self.id = id
@@ -119,17 +137,20 @@ class msgObj:
         self.content = content
         self.modified = False
     
+    # For printing within server
     def getStr(self):
         return "{}; {}; {}; {}; {}".format(self.id, self.time, self.fromUser, 
                                            self.content, self.modified)
     
+    # For printing at client
     def clientPrint(self):
-        if (modified):
+        if (self.modified):
             return "#{}, {} edited \"{}\" at {}".format(self.id, self.fromUser, 
                                                         self.content, self.time)
         else:
             return "#{}, {} posted \"{}\" at {}".format(self.id, self.fromUser, 
                                                         self.content, self.time)
+# Data structure for editing the list of message
 class msgList:
     def __init__ (self):
         self.msgList = []
@@ -147,6 +168,7 @@ class msgList:
         self.__writeLog()
         return obj
     
+    # Remove from list and logfile
     def delMsg(self, user, msgID, time):
         for i in self.msgList:
             if (i.id == int(msgID)):
@@ -159,6 +181,7 @@ class msgList:
                 return 2
         return 3
     
+    # Modify entries in list and logfile
     def modMsg(self, user, msgID, time, newContent):
         for i in self.msgList:
             if (i.id == int(msgID)):
@@ -171,13 +194,14 @@ class msgList:
                 return 1
         return 2
     
-    
+    # Append to log file
     def __writeLog(self):
         msgObj = self.msgList[-1]
         print("Writing to log: " + msgObj.getStr() + "\n")
         with open("messagelog.txt", "a") as f:
             f.write(msgObj.getStr() + "\n")
     
+    # Remove entry from log file by copying and replacing
     def __rmLog(self, obj):
         with open("messagelog.txt", "r") as f:
             lines = f.readlines()
@@ -187,6 +211,7 @@ class msgList:
                 if (int(msgId) != obj.id):
                     f.write(line)
     
+    # Modify particular entry in logfile
     def __modLog(self, obj):
         with open("messagelog.txt", "r") as f:
             lines = f.readlines()
@@ -200,20 +225,20 @@ class msgList:
     
     def toRead(self, user, time):
         retList = []
-        afterTime = datetime.strptime(time, "%d/%m/%Y %H:%M:%S")
-        for msg in msgList:
-            msgTime = datetime.strptime(msg.time, "%d/%m/%Y %H:%M:%S")
+        afterTime = dt.datetime.strptime(time, "%d/%m/%Y %H:%M:%S")
+        for msg in self.msgList:
+            msgTime = dt.datetime.strptime(msg.time, "%d/%m/%Y %H:%M:%S")
             if (msgTime > afterTime):
-                if (not((len(user) == len(msg.user)) and (user in msg.user))):
+                if (not((len(user) == len(msg.fromUser)) and (user in msg.fromUser))):
                     retList.append(msg)
                 
         return retList;
             
 def recv_handler():
-    global t_lock
-    global connections
-    global clientSockets
-    global serverSocket
+    global t_lock         # Control access to shared data structures
+    global connections    # List of (sockets, addr) 
+    global clientSockets  # List of active user's sockets
+    global serverSocket   # The server socket for recv connections
     
     print('Server is ready for service')
     while(1):
@@ -234,6 +259,7 @@ def recv_handler():
                     sentence = curSocket.recv(BUFLEN)
                     sentence = sentence.decode()
                     if (sentence):
+                        # Handle waiting blocking event
                         requestHand=threading.Thread(name="requestHand", target=handleRequest(curSocket, sentence))
                         requestHand.daemon=True
                         requestHand.start()                            
@@ -247,44 +273,19 @@ def recv_handler():
             
             # Leave critical section
             t_lock.notify()
-                
-def send_handler():
-    global t_lock
-    global clientSocket
-    global serverSocket
-    global activeUsers
-    global msgHist
-    
-    msgIndex = 0
-    # Continous loop until new message is found. Send to all active users.
-    while(1):
-        #get lock
-        with t_lock:
-            msgObj = msgHist.getUnsentMsg(msgIndex)
-            if (msgObj != NULL):
-                onlineUsers = activeUsers.clientList
-                sendStr = "NEWMSG {} {} {} {}".format(msgObj.fromUser, msgObj.id, msgObj.contents, msgObj.time)
-                for i in onlineUsers:
-                    i.socket.send()
-                
-                msgIndex = msgIndex + 1
-                
-            
-            #notify other thread
-            t_lock.notify()
-        #sleep for UPDATE_INTERVAL
-        time.sleep(UPDATE_INTERVAL)
 
 def handleRequest(sockfd, sentence):
-    global authenticator
-    global activeUsers
-    global msgHist
-    global clientSockets
-    global connections
+    global authenticator # Used for process authObj 
+    global activeUsers   # Used to process clientObj
+    global msgHist       # Used to process messageObj
+    global clientSockets # List of active client sockets
+    global connections   # List of tuples of (sockets, addr)
     
+    # Extract client CMD and username
     args = sentence.split(" ")
     user = args[0]
-
+    
+    print(args[1])
     if (args[0] == "AUTH"):
         user = args[1]
         passwd = args[2]
@@ -329,10 +330,10 @@ def handleRequest(sockfd, sentence):
     
     elif (args[1] == "DLT"):
         # Sentence format  = USER DLT MSGID TIMESTAMP 
-        
+        args = sentence.split(" ", 3)
         if (len(args) != 4):
             sockfd.send("DLTID".encode())
-            print(user + " failed DLT")
+            print(user + " failed DLT with wrong number of arguments")
             return;
         
         user = args[0]
@@ -372,13 +373,13 @@ def handleRequest(sockfd, sentence):
         
         if (result == 0):
             sendStr = "EDTYES"
-            print(user + " modified MSG #{} to {} at {}". format(msgID, nMsg, time))
+            print(user + " modified MSG #{} to {} at {}".format(msgID, nMsg, time))
         elif (result == 1):
             sendStr = "EDTUSER"
-            print(user + " failed EDT #{} at {}". format(msgID, time))
+            print(user + " failed EDT #{} at {}".format(msgID, time))
         else:
             sendStr = "EDTID"
-            print(user + " failed EDT #{} at {}". format(msgID, time))
+            print(user + " failed EDT #{} at {}".format(msgID, time))
         
     elif (args[1] == "RDM"):
         # Sentence format USER RDM TIME
@@ -394,7 +395,7 @@ def handleRequest(sockfd, sentence):
         toReadList = msgHist.toRead(user, time)
         if (len(toReadList) == 0):
             sendStr = "RDMT No recent messages found"
-            print(user + " RDM none at {}". format(time))
+            print(user + " RDM none at {}".format(time))
         else:
             sendStr = "RDMT "
             for i in toReadList:
@@ -407,8 +408,8 @@ def handleRequest(sockfd, sentence):
         # No arguments
         onlineUsers = activeUsers.getOthers(user)
         if (len(onlineUsers) == 0):
-            sendStr = "ATU No recent messages found"
-            print(user + " RDM none at {}". format(time))
+            sendStr = "ATU No other users online"
+            print(user + " RDM returned no other users online")
         else:
             sendStr = "ATU "
             for i in onlineUsers:
@@ -479,10 +480,6 @@ print ("The server is ready to receive")
 recv_thread=threading.Thread(name="RecvHandler", target=recv_handler)
 recv_thread.daemon=True
 recv_thread.start()
-
-# send_thread=threading.Thread(name="SendHandler",target=send_handler)
-# send_thread.daemon=True
-# send_thread.start()
 
 while (1):
     time.sleep(0.1)

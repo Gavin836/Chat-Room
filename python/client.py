@@ -31,7 +31,7 @@ while (1):
     result = clientSocket.recv(BUFLEN)
     result = result.decode()
     
-    print("#SERVER RESPONSE: " + result)
+    # print("#SERVER RESPONSE: " + result)  # Debugging for server responses
     if (result == "TIMEOUT"):
         print("Too many incorrect login attempts have been made. Waiting 10 seconds...")
     
@@ -51,8 +51,9 @@ while (1):
     #We wait to receive the reply from the server
     result = clientSocket.recv(BUFLEN)
     result = result.decode()
-    print("#SERVER RESPONSE: " + result)
-
+    # print("#SERVER RESPONSE: " + result) # Dubugging for server response
+    
+    # Server return codes determine how to handle the string
     if ("EXIT" in result):
         print("Goodbye!")
         exit(0)
@@ -101,10 +102,10 @@ while (1):
         sendStr = result.split(" ", 1);
         print(sendStr[1])
         
-    elif(result.contains("UPD")):
+    elif("UDP" in result):
         pass
     else:
-        printf("Unknown command. Try again")
+        print("Unknown command. Try again")
 
 clientSocket.close()
 #and close the socket
